@@ -2,37 +2,87 @@ PARSER_BEGIN(CS259Parser)
 import java.util.*;
 
 public class CS259Parser {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws EvalException {
         CS259Parser parser = new CS259Parser(System.in);
         try {
             parser.Program();
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        for (String n: Functions.table.keySet()) {
+            String fn = Functions.table.get(n).toString();
+            System.out.println(fn);
+        }
+
+        System.out.println(Functions.table.get("MAIN").eval(new int[0]));
+
     }
 }
 
-class Function implements Callable {
-    public final String name;
-    public final String argument;
-    public final Callable expr;
 
-    public Function(String name, String argument, Callable expr) {
+
+/**
+ * Exception raised during evaluation.
+ */
+class EvalException extends Exception {
+    public EvalException() {
+        super();
+    }
+    public EvalException(String message) {
+        super(message);
+    }
+}
+
+/**
+ * Interface that needs to be implemented by all the elements of an expression.
+ */
+interface Evalable {
+    public int eval(HashMap<String, Integer> args) throws EvalException;
+}
+
+/**
+ * Represents a function that can be called with an array of numeric arguments.
+ */
+class Function {
+    public final String name;
+    public final String[] args;
+    public final Evalable expr;
+
+    public Function(String name, String[] args, Evalable expr) {
         this.name = name;
-        this.argument = argument;
+        this.args = args;
         this.expr = expr;
     }
 
-    public int call(int arg) {
-        return expr.call(arg);
+    public int eval(int[] args) throws EvalException {
+        if (args.length != this.args.length) {
+            throw new EvalException("Incorrect number of arguments.");
+        }
+        HashMap<String, Integer> nargs = new HashMap<String, Integer>();
+        for (int i = 0; i < args.length; i++) {
+            nargs.put(this.args[i], args[i]);
+        }
+        return expr.eval(nargs);
     }
 
     public String toString() {
-        return name+"("+argument+"):="+expr;
+        String r = name+"(";
+        for (int i = 0; i < args.length; i++) {
+            if (i == args.length-1) {
+                r += args[i];
+            } else {
+                r += args[i]+",";
+            }
+        }
+        return r+"):="+expr;
     }
 }
 
-class Number implements Callable {
+/**
+ * Represents an (unsigned) integer.
+ */
+class Number implements Evalable {
     public final int value;
 
     public Number(String value) {
@@ -42,7 +92,7 @@ class Number implements Callable {
         this.value = value;
     }
 
-    public int call(int arg) {
+    public int eval(HashMap<String, Integer> args) {
         return value;
     }
 
@@ -51,18 +101,18 @@ class Number implements Callable {
     }
 }
 
-class Argument implements Callable {
+/**
+ * Represents a variable/argument.
+ */
+class Argument implements Evalable {
     public final String name;
 
     public Argument(String name) {
         this.name = name;
     }
 
-    public int call(int arg) throws Exception {
-        if (name == Functions.current.argument) {
-            throw new Exception("Incorrect argument name \""+name+"\" for function \""+Functions.current.name+"\" (expected \""+Functions.current.argument+"\")");
-        }
-        return arg;
+    public int eval(HashMap<String, Integer> args) {
+        return args.get(name);
     }
 
     public String toString() {
@@ -70,35 +120,53 @@ class Argument implements Callable {
     }
 }
 
-class Call implements Callable {
+/**
+ * Represents a call to a function.
+ */
+class Call implements Evalable {
     public final String function;
-    public final Callable argument;
+    public final Evalable[] args;
 
-    public Call(String function, Callable argument) {
+    public Call(String function, Evalable[] args) {
         this.function = function;
-        this.argument = argument;
+        this.args = args;
     }
 
-    public int call(int arg) throws Exception {
-        return Functions.table.get(function).call(arg);
+    public int eval(HashMap<String, Integer> args) throws EvalException {
+        int[] iargs = new int[this.args.length];
+        for (int i = 0; i < iargs.length; i++) {
+            iargs[i] = this.args[i].eval(args);
+        }
+        return Functions.table.get(function).eval(iargs);
     }
 
     public String toString() {
-        return function+"("+argument+")";
+        String r = function+"(";
+        for (int i = 0; i < args.length; i++) {
+            if (i == args.length-1) {
+                r += args[i];
+            } else {
+                r += args[i]+",";
+            }
+        }
+        return r+")";
     }
 }
 
-class Product implements Callable {
-    public final Callable factor1;
-    public final Callable factor2;
+/**
+ * Represents a product.
+ */
+class Product implements Evalable {
+    public final Evalable factor1;
+    public final Evalable factor2;
 
-    public Product(Callable factor1, Callable factor2) {
+    public Product(Evalable factor1, Evalable factor2) {
         this.factor1 = factor1;
         this.factor2 = factor2;
     }
 
-    public int call(int arg) throws Exception {
-        return factor1.call(arg)*factor2.call(arg);
+    public int eval(HashMap<String, Integer> args) throws EvalException {
+        return factor1.eval(args)*factor2.eval(args);
     }
 
     public String toString() {
@@ -106,17 +174,20 @@ class Product implements Callable {
     }
 }
 
-class Sum implements Callable {
-    public final Callable summand1;
-    public final Callable summand2;
+/**
+ * Represents a sum.
+ */
+class Sum implements Evalable {
+    public final Evalable summand1;
+    public final Evalable summand2;
 
-    public Sum(Callable summand1, Callable summand2) {
+    public Sum(Evalable summand1, Evalable summand2) {
         this.summand1 = summand1;
         this.summand2 = summand2;
     }
 
-    public int call(int arg) throws Exception {
-        return summand1.call(arg)+summand2.call(arg);
+    public int eval(HashMap<String, Integer> args) throws EvalException {
+        return summand1.eval(args)+summand2.eval(args);
     }
 
     public String toString() {
@@ -124,6 +195,9 @@ class Sum implements Callable {
     }
 }
 
+/**
+ * Class that stores data required for evaluation.
+ */
 class Functions {
     public static HashMap<String, Function> table = new HashMap<String, Function>();
     public static HashSet<String> calls = new HashSet<String>();
@@ -132,7 +206,10 @@ class Functions {
 
 PARSER_END(CS259Parser)
 
-/** Tokens */
+/**
+ * Tokens
+ */
+// TODO: smallest to largest for performance
 TOKEN :
 {
         < EOL   : ";" ( "\r" | "\n" | "\r\n" ) >
@@ -159,25 +236,18 @@ TOKEN :
 void Program() : { Function f; }
 {
     ( f = Def() { Functions.table.put(f.name, f); }
-    )* <EOF> {
-        for (String n: Functions.table.keySet()) {
-            String fn = Functions.table.get(n).toString();
-            System.out.println(fn);
-        }
-        System.out.println("Done");
-    }
+    )* <EOF> {}
 }
 
-Function Def() : { Token f, a = null; Callable e; }
+Function Def() : { Token f, a = null; Evalable e; }
 {
     <DEF> <S> ( ( f = <MAIN> ) | ( f = <FUNC> <S> a = <ARG> ) ) <S> <LANG> <S> e = Sums(a) <S> <RANG> <S> <EOL>
     {
-        // argument check?
-        return new Function(f.image, (a == null ? null : a.image), e);
+        return new Function(f.image, (a == null ? new String[0] : new String[] {a.image}), e);
     }
 }
 
-Callable Nullnary(Token a) : { Token f; Callable e; }
+Evalable Nullnary(Token a) : { Token f; Evalable e; }
 {
         <NUM> { return new Number(token.image); }
     |   <ARG> {
@@ -186,27 +256,27 @@ Callable Nullnary(Token a) : { Token f; Callable e; }
             }
             return new Argument(token.image);
         }
-    |   f = <FUNC> <LPAR> e = Sums(a) <RPAR> { return new Call(f.image, e); }
+    |   f = <FUNC> <LPAR> e = Sums(a) <RPAR> { return new Call(f.image, new Evalable[] {e}); }
 }
 
-Callable CreateProduct(Token a, Callable p) : { Callable f; }
+Evalable CreateProduct(Token a, Evalable p) : { Evalable f; }
 {
     ( <TIMES> f = Nullnary(a) { p = new Product(p, f); }
     )* { return p; }
 }
 
-Callable Products(Token a) : { Callable e; }
+Evalable Products(Token a) : { Evalable e; }
 {
     e = Nullnary(a) e = CreateProduct(a, e) { return e; }
 }
 
-Callable CreateSum(Token a, Callable s) : { Callable e; }
+Evalable CreateSum(Token a, Evalable s) : { Evalable e; }
 {
     ( <PLUS> e = Products(a) { s = new Sum(s, e); }
     )* { return s; }
 }
 
-Callable Sums(Token a) : { Callable e; }
+Evalable Sums(Token a) : { Evalable e; }
 {
     e = Products(a) e = CreateSum(a, e) { return e; }
 }
