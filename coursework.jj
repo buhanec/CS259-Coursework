@@ -12,23 +12,19 @@ public class CS259Parser {
     }
 }
 
-interface Evalable {
-    int eval(int arg) throws Exception;
-}
-
-class Function implements Evalable {
+class Function implements Callable {
     public final String name;
     public final String argument;
-    public final Evalable expr;
+    public final Callable expr;
 
-    public Function(String name, String argument, Evalable expr) {
+    public Function(String name, String argument, Callable expr) {
         this.name = name;
         this.argument = argument;
         this.expr = expr;
     }
 
-    public int eval(int arg) {
-        return 0;
+    public int call(int arg) {
+        return expr.call(arg);
     }
 
     public String toString() {
@@ -36,7 +32,7 @@ class Function implements Evalable {
     }
 }
 
-class Number implements Evalable {
+class Number implements Callable {
     public final int value;
 
     public Number(String value) {
@@ -46,23 +42,23 @@ class Number implements Evalable {
         this.value = value;
     }
 
-    public int eval(int arg) {
-        return this.value;
+    public int call(int arg) {
+        return value;
     }
 
     public String toString() {
-        return Integer.toString(this.value);
+        return Integer.toString(value);
     }
 }
 
-class Argument implements Evalable {
+class Argument implements Callable {
     public final String name;
 
     public Argument(String name) {
         this.name = name;
     }
 
-    public int eval(int arg) throws Exception {
+    public int call(int arg) throws Exception {
         if (name == Functions.current.argument) {
             throw new Exception("Incorrect argument name \""+name+"\" for function \""+Functions.current.name+"\" (expected \""+Functions.current.argument+"\")");
         }
@@ -70,21 +66,21 @@ class Argument implements Evalable {
     }
 
     public String toString() {
-        return this.name;
+        return name;
     }
 }
 
-class Call implements Evalable {
+class Call implements Callable {
     public final String function;
-    public final Evalable argument;
+    public final Callable argument;
 
-    public Call(String function, Evalable argument) {
+    public Call(String function, Callable argument) {
         this.function = function;
         this.argument = argument;
     }
 
-    public int eval(int arg) throws Exception {
-        return Functions.table.get(function).eval(arg);
+    public int call(int arg) throws Exception {
+        return Functions.table.get(function).call(arg);
     }
 
     public String toString() {
@@ -92,17 +88,17 @@ class Call implements Evalable {
     }
 }
 
-class Product implements Evalable {
-    public final Evalable factor1;
-    public final Evalable factor2;
+class Product implements Callable {
+    public final Callable factor1;
+    public final Callable factor2;
 
-    public Product(Evalable factor1, Evalable factor2) {
+    public Product(Callable factor1, Callable factor2) {
         this.factor1 = factor1;
         this.factor2 = factor2;
     }
 
-    public int eval(int arg) throws Exception {
-        return factor1.eval(arg)*factor2.eval(arg);
+    public int call(int arg) throws Exception {
+        return factor1.call(arg)*factor2.call(arg);
     }
 
     public String toString() {
@@ -110,17 +106,17 @@ class Product implements Evalable {
     }
 }
 
-class Sum implements Evalable {
-    public final Evalable summand1;
-    public final Evalable summand2;
+class Sum implements Callable {
+    public final Callable summand1;
+    public final Callable summand2;
 
-    public Sum(Evalable summand1, Evalable summand2) {
+    public Sum(Callable summand1, Callable summand2) {
         this.summand1 = summand1;
         this.summand2 = summand2;
     }
 
-    public int eval(int arg) throws Exception {
-        return summand1.eval(arg)+summand2.eval(arg);
+    public int call(int arg) throws Exception {
+        return summand1.call(arg)+summand2.call(arg);
     }
 
     public String toString() {
@@ -172,46 +168,45 @@ void Program() : { Function f; }
     }
 }
 
-Function Def() : { Token f, a = null; Evalable e; }
+Function Def() : { Token f, a = null; Callable e; }
 {
-    <DEF> <S> ( ( f = <MAIN> ) | ( f = <FUNC> <S> a = <ARG> ) ) <S> <LANG> <S> e = Sums() <S> <RANG> <S> <EOL>
+    <DEF> <S> ( ( f = <MAIN> ) | ( f = <FUNC> <S> a = <ARG> ) ) <S> <LANG> <S> e = Sums(a) <S> <RANG> <S> <EOL>
     {
-        if (a != null) {
-            if (f.image != "MAIN") {
-                return new Function(f.image, a.image, e);
-            } else {
-                throw new ParseException("Incorrect MAIN definition.");
-            }
-        }
-        return new Function(f.image, null, e);
+        // argument check?
+        return new Function(f.image, (a == null ? null : a.image), e);
     }
 }
 
-Evalable Nullnary() : { Token f; Evalable e; }
+Callable Nullnary(Token a) : { Token f; Callable e; }
 {
         <NUM> { return new Number(token.image); }
-    |   <ARG> { return new Argument(token.image); }
-    |   f = <FUNC> <LPAR> e = Sums() <RPAR> { return new Call(f.image, e); }
+    |   <ARG> {
+            if (!token.image.equals(a.image)) {
+                throw new ParseException("Incorrect argument \"" + token.image + "\" (expected \"" + a.image + "\") at line " + token.beginLine + ", column " + token.beginColumn + ".");
+            }
+            return new Argument(token.image);
+        }
+    |   f = <FUNC> <LPAR> e = Sums(a) <RPAR> { return new Call(f.image, e); }
 }
 
-Evalable CreateProduct(Evalable p) : { Evalable f; }
+Callable CreateProduct(Token a, Callable p) : { Callable f; }
 {
-    ( <TIMES> f = Nullnary() { p = new Product(p, f); }
+    ( <TIMES> f = Nullnary(a) { p = new Product(p, f); }
     )* { return p; }
 }
 
-Evalable Products() : { Evalable e; }
+Callable Products(Token a) : { Callable e; }
 {
-    e = Nullnary() e = CreateProduct(e) { return e; }
+    e = Nullnary(a) e = CreateProduct(a, e) { return e; }
 }
 
-Evalable CreateSum(Evalable s) : { Evalable e; }
+Callable CreateSum(Token a, Callable s) : { Callable e; }
 {
-    ( <PLUS> e = Products() { s = new Sum(s, e); }
+    ( <PLUS> e = Products(a) { s = new Sum(s, e); }
     )* { return s; }
 }
 
-Evalable Sums() : { Evalable e; }
+Callable Sums(Token a) : { Callable e; }
 {
-    e = Products() e = CreateSum(e) { return e; }
+    e = Products(a) e = CreateSum(a, e) { return e; }
 }
