@@ -1,0 +1,2 @@
+DEF MAIN { ADD(2 3) } ;
+DEF ADD x y { x+y } ;

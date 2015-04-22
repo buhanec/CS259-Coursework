@@ -1,0 +1,4 @@
+DEF MULTI a b { a*b } ;
+DEF ADDTHREE a { a+3 } ;
+DEF MAIN { MULTI(ADDTHREE(4)+1+MULTI(1 2)+1 2) } ;
+DEF TEST x { 1+1*3 } ;

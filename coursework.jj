@@ -1,3 +1,8 @@
+options {
+    LOOKAHEAD = 2;
+    FORCE_LA_CHECK = true;
+}
+
 PARSER_BEGIN(CS259Parser)
 import java.util.*;
 
@@ -10,17 +15,15 @@ public class CS259Parser {
             e.printStackTrace();
         }
 
-        for (String n: Functions.table.keySet()) {
-            String fn = Functions.table.get(n).toString();
+        for (String n: Functions.map.keySet()) {
+            String fn = Functions.map.get(n).toString();
             System.out.println(fn);
         }
 
-        System.out.println(Functions.table.get("MAIN").eval(new int[0]));
+        System.out.println(Functions.map.get("MAIN").eval(new int[0]));
 
     }
 }
-
-
 
 /**
  * Exception raised during evaluation.
@@ -38,7 +41,7 @@ class EvalException extends Exception {
  * Interface that needs to be implemented by all the elements of an expression.
  */
 interface Evalable {
-    public int eval(HashMap<String, Integer> args) throws EvalException;
+    public int eval(Map<String, Integer> args) throws EvalException;
 }
 
 /**
@@ -59,7 +62,7 @@ class Function {
         if (args.length != this.args.length) {
             throw new EvalException("Incorrect number of arguments.");
         }
-        HashMap<String, Integer> nargs = new HashMap<String, Integer>();
+        Map<String, Integer> nargs = new HashMap<String, Integer>();
         for (int i = 0; i < args.length; i++) {
             nargs.put(this.args[i], args[i]);
         }
@@ -92,7 +95,7 @@ class Number implements Evalable {
         this.value = value;
     }
 
-    public int eval(HashMap<String, Integer> args) {
+    public int eval(Map<String, Integer> args) {
         return value;
     }
 
@@ -111,7 +114,7 @@ class Argument implements Evalable {
         this.name = name;
     }
 
-    public int eval(HashMap<String, Integer> args) {
+    public int eval(Map<String, Integer> args) {
         return args.get(name);
     }
 
@@ -132,12 +135,12 @@ class Call implements Evalable {
         this.args = args;
     }
 
-    public int eval(HashMap<String, Integer> args) throws EvalException {
+    public int eval(Map<String, Integer> args) throws EvalException {
         int[] iargs = new int[this.args.length];
         for (int i = 0; i < iargs.length; i++) {
             iargs[i] = this.args[i].eval(args);
         }
-        return Functions.table.get(function).eval(iargs);
+        return Functions.map.get(function).eval(iargs);
     }
 
     public String toString() {
@@ -165,7 +168,7 @@ class Product implements Evalable {
         this.factor2 = factor2;
     }
 
-    public int eval(HashMap<String, Integer> args) throws EvalException {
+    public int eval(Map<String, Integer> args) throws EvalException {
         return factor1.eval(args)*factor2.eval(args);
     }
 
@@ -186,7 +189,7 @@ class Sum implements Evalable {
         this.summand2 = summand2;
     }
 
-    public int eval(HashMap<String, Integer> args) throws EvalException {
+    public int eval(Map<String, Integer> args) throws EvalException {
         return summand1.eval(args)+summand2.eval(args);
     }
 
@@ -199,9 +202,7 @@ class Sum implements Evalable {
  * Class that stores data required for evaluation.
  */
 class Functions {
-    public static HashMap<String, Function> table = new HashMap<String, Function>();
-    public static HashSet<String> calls = new HashSet<String>();
-    public static Function current = null;
+    public static Map<String, Function> map = new HashMap<String, Function>();
 }
 
 PARSER_END(CS259Parser)
@@ -209,22 +210,21 @@ PARSER_END(CS259Parser)
 /**
  * Tokens
  */
-// TODO: smallest to largest for performance
 TOKEN :
 {
-        < EOL   : ";" ( "\r" | "\n" | "\r\n" ) >
-    |   < DEF   : "DEF" >
-    |   < MAIN  : "MAIN" >
-    |   < FUNC  : ( <UPPER> )+ >
-    |   < ARG   : ( <LOWER> )+ >
-    |   < NUM   : ( <DIGIT> )+ >
-    |   < PLUS  : "+" >
+        < PLUS  : "+" >
     |   < TIMES : "*" >
     |   < LPAR  : "(" >
     |   < RPAR  : ")" >
     |   < LANG  : "{" >
     |   < RANG  : "}" >
     |   < S     : " " >
+    |   < DEF   : "DEF" >
+    |   < MAIN  : "MAIN" >
+    |   < EOL   : ";" ( "\r" | "\n" | "\r\n" ) >
+    |   < FUNC  : ( <UPPER> )+ >
+    |   < ARG   : ( <LOWER> )+ >
+    |   < NUM   : ( <DIGIT> )+ >
 }
 TOKEN :
 {
@@ -235,48 +235,80 @@ TOKEN :
 
 void Program() : { Function f; }
 {
-    ( f = Def() { Functions.table.put(f.name, f); }
+    ( f = Def() { Functions.map.put(f.name, f); }
     )* <EOF> {}
 }
 
-Function Def() : { Token f, a = null; Evalable e; }
+Function Def() : {
+    Token t;
+    Evalable e;
+    List<String> l = new ArrayList<String>();
+    Set<String> s = new HashSet<String>();
+}
 {
-    <DEF> <S> ( ( f = <MAIN> ) | ( f = <FUNC> <S> a = <ARG> ) ) <S> <LANG> <S> e = Sums(a) <S> <RANG> <S> <EOL>
+    <DEF> <S>
+    (
+            ( t = <MAIN> )
+        |   ( t = <FUNC> (
+                <S> <ARG> { l.add(token.image); } l = Arguments(l) )?
+            )
+    ) { s.addAll(l); }
+    <S> <LANG> <S> e = Sums(s) <S> <RANG> <S> <EOL>
     {
-        return new Function(f.image, (a == null ? new String[0] : new String[] {a.image}), e);
+        return new Function(t.image, l.toArray(new String[l.size()]), e);
     }
 }
 
-Evalable Nullnary(Token a) : { Token f; Evalable e; }
+List<String> Arguments(List<String> s) : { Token t; }
+{
+    ( <S> t = <ARG> { s.add(t.image); } )* { return s; }
+}
+
+List<Evalable> CallArguments(Set<String> s, List<Evalable> l) : {
+    Evalable e;
+}
+{
+    ( <S> e = Sums(s) { l.add(e); } )* { return l; }
+}
+
+Evalable Nullnary(Set<String> s) : {
+    Token t;
+    Evalable e;
+    List<Evalable> l = new ArrayList<Evalable>();
+}
 {
         <NUM> { return new Number(token.image); }
     |   <ARG> {
-            if (!token.image.equals(a.image)) {
-                throw new ParseException("Incorrect argument \"" + token.image + "\" (expected \"" + a.image + "\") at line " + token.beginLine + ", column " + token.beginColumn + ".");
+            if (!s.contains(token.image)) {
+                throw new ParseException("Incorrect argument \"" +
+                                         token.image + " at line " +
+                                         token.beginLine + ", column " +
+                                         token.beginColumn + ".");
             }
             return new Argument(token.image);
         }
-    |   f = <FUNC> <LPAR> e = Sums(a) <RPAR> { return new Call(f.image, new Evalable[] {e}); }
+    |   t = <FUNC> <LPAR>
+        ( e = Sums(s) { l.add(e); } l = CallArguments(s, l) )? <RPAR> {
+            return new Call(t.image, l.toArray(new Evalable[l.size()]));
+        }
 }
 
-Evalable CreateProduct(Token a, Evalable p) : { Evalable f; }
+Evalable CreateProduct(Set<String> s, Evalable p) : { Evalable e; }
 {
-    ( <TIMES> f = Nullnary(a) { p = new Product(p, f); }
-    )* { return p; }
+    ( <TIMES> e = Nullnary(s) { p = new Product(p, e); } )* { return p; }
 }
 
-Evalable Products(Token a) : { Evalable e; }
+Evalable Products(Set<String> s) : { Evalable e; }
 {
-    e = Nullnary(a) e = CreateProduct(a, e) { return e; }
+    e = Nullnary(s) e = CreateProduct(s, e) { return e; }
 }
 
-Evalable CreateSum(Token a, Evalable s) : { Evalable e; }
+Evalable CreateSum(Set<String> s, Evalable p) : { Evalable e; }
 {
-    ( <PLUS> e = Products(a) { s = new Sum(s, e); }
-    )* { return s; }
+    ( <PLUS> e = Products(s) { p = new Sum(p, e); } )* { return p; }
 }
 
-Evalable Sums(Token a) : { Evalable e; }
+Evalable Sums(Set<String> s) : { Evalable e; }
 {
-    e = Products(a) e = CreateSum(a, e) { return e; }
+    e = Products(s) e = CreateSum(s, e) { return e; }
 }
