@@ -1,0 +1,4 @@
+DEF ABCD xyz { BCD(xyz) } ;
+DEF BCD xy { 2*CD(xy) } ;
+DEF CD x { x+4 } ;
+DEF MAIN { ABCD(1) } ;
