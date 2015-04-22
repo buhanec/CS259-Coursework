@@ -3,33 +3,57 @@ options {
     FORCE_LA_CHECK = true;
 }
 
-PARSER_BEGIN(CS259Parser)
+PARSER_BEGIN(Assignment)
 import java.util.*;
 
-public class CS259Parser {
+public class Assignment {
     public static void main(String[] args) throws EvalException {
-        CS259Parser parser = new CS259Parser(System.in);
+        Assignment parser = new Assignment(System.in);
         boolean eval = true;
+        boolean debug = false;
+
+        // Try to parse
         try {
             parser.Program();
+        // Parsing exception
         } catch (ParseException e) {
             System.out.println("FAIL");
-            System.out.println(e.getMessage());
+            System.err.println(e.getMessage());
             eval = false;
+        // Exception elsewhere, should not happen
         } catch (Exception e) {
             System.out.println("FAIL");
-            System.out.println("Unknown error: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("Non-parsing error: " + e.getMessage());
+            if (debug) {
+                e.printStackTrace();
+            }
             eval = false;
         }
+
+        // Try to eval
         if (eval) {
-            System.out.println("DEBUG");
-            for (String n: Functions.map.keySet()) {
-                String fn = Functions.map.get(n).toString();
-                System.out.println(fn);
+            if (debug) {
+                for (String n: Functions.map.keySet()) {
+                    String fn = Functions.map.get(n).toString();
+                    System.out.println(fn);
+                }
             }
             System.out.println("PASS");
-            System.out.println(Functions.map.get("MAIN").eval(new int[0]));
+            // Start evaluation by calling MAIN with no parameters and catch
+            // any errors during evaluations.
+            try {
+                System.out.println(Functions.map.get("MAIN").eval(new int[0]));
+            } catch (RecursionException e) {
+                System.out.println("DIVERGENCE");
+            } catch (EvalException e) {
+                System.err.println("Eval error: " + e.getMessage());
+            } catch (Exception e) {
+                System.err.println("Non-eval error: " + e.getMessage());
+                if (debug) {
+                    e.printStackTrace();
+                }
+            }
+
         }
     }
 }
@@ -54,6 +78,15 @@ class EvalException extends Exception {
     }
     public EvalException(String message) {
         super(message);
+    }
+}
+
+/**
+ * Recursion exception.
+ */
+class RecursionException extends EvalException {
+    public RecursionException() {
+        super("Recursion");
     }
 }
 
@@ -203,7 +236,7 @@ class Call extends Positioned implements Evalable {
     public int eval(Map<String, Integer> args) throws EvalException {
         int retval;
         if (Functions.stack.search(this) > -1) {
-            throw new EvalException("Recursion");
+            throw new RecursionException();
         }
         Functions.stack.push(this);
         int[] iargs = new int[this.args.length];
@@ -272,7 +305,7 @@ class Sum extends Positioned implements Evalable {
     }
 }
 
-PARSER_END(CS259Parser)
+PARSER_END(Assignment)
 
 /**
  * Tokens for matching.
@@ -310,7 +343,7 @@ void Program() : { Function f; int i = 1; }
     // Find definitions and increase the line counter since every definition
     // is on a single line. Definitions are stored in Functions.map.
     ( f = Def(i++) { Functions.map.put(f.name, f); }
-    )* <EOF> {
+    )+ <EOF> {
         // Check if a MAIN function is defined.
         if (!Functions.map.containsKey("MAIN")) {
             throw new ParseException("No MAIN function.");
