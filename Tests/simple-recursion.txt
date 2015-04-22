@@ -1,0 +1,2 @@
+DEF MAIN { REC(1) } ;
+DEF REC x { REC(x) } ;

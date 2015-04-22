@@ -136,11 +136,18 @@ class Call implements Evalable {
     }
 
     public int eval(Map<String, Integer> args) throws EvalException {
+        int retval;
+        if (Functions.stack.search(this) > -1) {
+            throw new EvalException("Recursion");
+        }
+        Functions.stack.push(this);
         int[] iargs = new int[this.args.length];
         for (int i = 0; i < iargs.length; i++) {
             iargs[i] = this.args[i].eval(args);
         }
-        return Functions.map.get(function).eval(iargs);
+        retval = Functions.map.get(function).eval(iargs);
+        Functions.stack.pop();
+        return retval;
     }
 
     public String toString() {
@@ -203,6 +210,7 @@ class Sum implements Evalable {
  */
 class Functions {
     public static Map<String, Function> map = new HashMap<String, Function>();
+    public static Stack<Call> stack = new Stack<Call>();
 }
 
 PARSER_END(CS259Parser)
