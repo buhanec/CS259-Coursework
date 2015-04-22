@@ -9,21 +9,41 @@ import java.util.*;
 public class CS259Parser {
     public static void main(String[] args) throws EvalException {
         CS259Parser parser = new CS259Parser(System.in);
+        boolean eval = true;
         try {
             parser.Program();
+        } catch (ParseException e) {
+            System.out.println("FAIL");
+            System.out.println(e.getMessage());
+            eval = false;
         } catch (Exception e) {
+            System.out.println("FAIL");
+            System.out.println("Unknown error: " + e.getMessage());
             e.printStackTrace();
+            eval = false;
         }
-
-        for (String n: Functions.map.keySet()) {
-            String fn = Functions.map.get(n).toString();
-            System.out.println(fn);
+        if (eval) {
+            System.out.println("DEBUG");
+            for (String n: Functions.map.keySet()) {
+                String fn = Functions.map.get(n).toString();
+                System.out.println(fn);
+            }
+            System.out.println("PASS");
+            System.out.println(Functions.map.get("MAIN").eval(new int[0]));
         }
-
-        System.out.println(Functions.map.get("MAIN").eval(new int[0]));
-
     }
 }
+
+/**
+ * Class that stores data required for call checking and evaluation.
+ */
+class Functions {
+    public static Map<String, Function> map = new HashMap<String, Function>();
+    public static Set<Call> calls = new HashSet<Call>();
+    public static Stack<Call> stack = new Stack<Call>();
+    public static int maxargs = 1;
+}
+
 
 /**
  * Exception raised during evaluation.
@@ -46,6 +66,9 @@ interface Evalable {
     public int getColumn();
 }
 
+/**
+ * Represents a position within the program.
+ */
 class Positioned {
     public final int line;
     public final int column;
@@ -108,7 +131,7 @@ class Function extends Positioned {
 }
 
 /**
- * Represents an (unsigned) integer.
+ * Represents a number in the AST.
  */
 class Number extends Positioned implements Evalable {
     public final int value;
@@ -136,16 +159,16 @@ class Number extends Positioned implements Evalable {
 }
 
 /**
- * Represents a variable/argument.
+ * Represents a parameter in the AST.
  */
-class Argument extends Positioned implements Evalable {
+class Parameter extends Positioned implements Evalable {
     public final String name;
 
-    public Argument(Token t) {
+    public Parameter(Token t) {
         super(t);
         this.name = t.image;
     }
-    public Argument(String name, int line, int column) {
+    public Parameter(String name, int line, int column) {
         super(line, column);
         this.name = name;
     }
@@ -160,7 +183,7 @@ class Argument extends Positioned implements Evalable {
 }
 
 /**
- * Represents a call to a function.
+ * Represents a call to a function in the AST.
  */
 class Call extends Positioned implements Evalable {
     public final String function;
@@ -206,7 +229,7 @@ class Call extends Positioned implements Evalable {
 }
 
 /**
- * Represents a product.
+ * Represents a product in the AST.
  */
 class Product extends Positioned implements Evalable {
     public final Evalable factor1;
@@ -228,7 +251,7 @@ class Product extends Positioned implements Evalable {
 }
 
 /**
- * Represents a sum.
+ * Represents a sum in the AST.
  */
 class Sum extends Positioned implements Evalable {
     public final Evalable summand1;
@@ -249,19 +272,10 @@ class Sum extends Positioned implements Evalable {
     }
 }
 
-/**
- * Class that stores data required for evaluation.
- */
-class Functions {
-    public static Map<String, Function> map = new HashMap<String, Function>();
-    public static Set<Call> calls = new HashSet<Call>();
-    public static Stack<Call> stack = new Stack<Call>();
-}
-
 PARSER_END(CS259Parser)
 
 /**
- * Tokens
+ * Tokens for matching.
  */
 TOKEN :
 {
@@ -276,7 +290,7 @@ TOKEN :
     |   < MAIN  : "MAIN" >
     |   < EOL   : ";" ( "\r" | "\n" | "\r\n" ) >
     |   < FUNC  : ( <UPPER> )+ >
-    |   < ARG   : ( <LOWER> )+ >
+    |   < PARAM : ( <LOWER> )+ >
     |   < NUM   : ( <DIGIT> )+ >
 }
 TOKEN :
@@ -286,13 +300,22 @@ TOKEN :
     |   < #LOWER : ["a"-"z"] >
 }
 
+/**
+ * Production for the entire program, entry point into the parsing of the
+ * program. Every function that is defined is stored in Functions.map and
+ * every call made in the program is stored in Functions.call.
+ */
 void Program() : { Function f; int i = 1; }
 {
+    // Find definitions and increase the line counter since every definition
+    // is on a single line. Definitions are stored in Functions.map.
     ( f = Def(i++) { Functions.map.put(f.name, f); }
     )* <EOF> {
+        // Check if a MAIN function is defined.
         if (!Functions.map.containsKey("MAIN")) {
             throw new ParseException("No MAIN function.");
         }
+        // Check if all calls made in the program are valid.
         for (Call c : Functions.calls) {
             if (!Functions.map.containsKey(c.function) ||
                 Functions.map.get(c.function).args.length != c.args.length) {
@@ -304,6 +327,12 @@ void Program() : { Function f; int i = 1; }
     }
 }
 
+/**
+ * Production for Function definitions.
+ *
+ * @param  i the current line number in the program input.
+ * @return   a Function object representing the matched function.
+ */
 Function Def(int i) : {
     Token t;
     Evalable e;
@@ -313,51 +342,89 @@ Function Def(int i) : {
 {
     <DEF> <S>
     (
+        // Determine if the function is MAIN or not, and in the latter case
+        // determine its parameters.
             ( t = <MAIN> )
         |   ( t = <FUNC> (
-                <S> <ARG> { l.add(token.image); } l = Arguments(l) )?
+                <S> <PARAM> { l.add(token.image); } l = Params(l) )?
             )
     ) { s.addAll(l); }
+    // Create the function body by finding the operation with the lowest
+    // precedence and letting it be built up from there.
     <S> <LANG> <S> e = Sums(s) <S> <RANG> <S> <EOL>
     {
         return new Function(t.image, l.toArray(new String[l.size()]), e, i);
     }
 }
 
-List<String> Arguments(List<String> s) : { Token t; }
+/**
+ * Performs the matching of all parameters when a function is being defined.
+ *
+ * @param  l the partial list of all parameters
+ * @return   the complete list of all parameters
+ */
+List<String> Params(List<String> l) : { Token t; }
 {
-    ( <S> t = <ARG> { s.add(t.image); } )* { return s; }
+    ( <S> t = <PARAM> { l.add(t.image); } )* { return l; }
 }
 
-List<Evalable> CallArguments(Set<String> s, List<Evalable> l) : {
-    Evalable e;
-}
-{
-    ( <S> e = Sums(s) { l.add(e); } )* { return l; }
-}
-
+/**
+ * Production for the Evalable expressions of the highest precedence. These are
+ * either nullary expressions (parameters, numbers) followed by unary
+ * expressions (function calls).
+ *
+ * @param  s the set of all valid parameter names in the expression
+ * @return   a nullary or unary Evalable
+ */
 Evalable Nullnary(Set<String> s) : {
     Token t;
     Evalable e;
     List<Evalable> l = new ArrayList<Evalable>();
 }
 {
+    // Matches a number
         <NUM> { return new Number(token); }
-    |   <ARG> {
+    // Matches a parameter
+    |   <PARAM> {
+            // Checks if the parameter is valid for the expression
             if (!s.contains(token.image)) {
-                throw new ParseException("Incorrect argument \"" +
+                throw new ParseException("Incorrect parameter \"" +
                                          token.image + " at line " +
                                          token.beginLine + ", column " +
                                          token.beginColumn + ".");
             }
-            return new Argument(token);
+            return new Parameter(token);
         }
+    // Matches a function call
     |   t = <FUNC> <LPAR>
-        ( e = Sums(s) { l.add(e); } l = CallArguments(s, l) )? <RPAR> {
+        // Matches all the parameters a function can accept, functions need
+        // at least 1 parameter.
+        ( e = Sums(s) { l.add(e); } l = CallParams(s, l) )? <RPAR> {
+            // Check if we exceed the maximum number of parameters
+            if (l.size() > Functions.maxargs) {
+                throw new ParseException("Too many parameters, found " +
+                                         l.size() + " (maximum is " +
+                                         Functions.maxargs + ") at line " +
+                                         t.beginLine + ", column " +
+                                         t.beginColumn + ".");
+            }
+            // Create the new call and add it to the set of all calls
             Call c = new Call(t, l.toArray(new Evalable[l.size()]));
             Functions.calls.add(c);
             return c;
         }
+}
+
+/**
+ * Performs the matching of all parameters when a function is being called.
+ *
+ * @param  s the set of all valid parameter names in the expression
+ * @param  l the partial list of all parameters
+ * @return   the complete list of all parameters
+ */
+List<Evalable> CallParams(Set<String> s, List<Evalable> l) : { Evalable e; }
+{
+    ( <S> e = Sums(s) { l.add(e); } )* { return l; }
 }
 
 /**
