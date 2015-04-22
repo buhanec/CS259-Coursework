@@ -42,17 +42,42 @@ class EvalException extends Exception {
  */
 interface Evalable {
     public int eval(Map<String, Integer> args) throws EvalException;
+    public int getLine();
+    public int getColumn();
+}
+
+class Positioned {
+    public final int line;
+    public final int column;
+
+    public Positioned(Token t) {
+        this.line = t.beginLine;
+        this.column = t.beginColumn;
+    }
+    public Positioned(int line, int column) {
+        this.line = line;
+        this.column = column;
+    }
+
+    public int getLine() {
+        return line;
+    }
+
+    public int getColumn() {
+        return column;
+    }
 }
 
 /**
  * Represents a function that can be called with an array of numeric arguments.
  */
-class Function {
+class Function extends Positioned {
     public final String name;
     public final String[] args;
     public final Evalable expr;
 
-    public Function(String name, String[] args, Evalable expr) {
+    public Function(String name, String[] args, Evalable expr, int line) {
+        super(line, 0);
         this.name = name;
         this.args = args;
         this.expr = expr;
@@ -85,13 +110,19 @@ class Function {
 /**
  * Represents an (unsigned) integer.
  */
-class Number implements Evalable {
+class Number extends Positioned implements Evalable {
     public final int value;
 
-    public Number(String value) {
+    public Number(Token t) {
+        super(t);
+        this.value = Integer.parseInt(t.image);
+    }
+    public Number(String value, int line, int column) {
+        super(line, column);
         this.value = Integer.parseInt(value);
     }
-    public Number(int value) {
+    public Number(int value, int line, int column) {
+        super(line, column);
         this.value = value;
     }
 
@@ -107,10 +138,15 @@ class Number implements Evalable {
 /**
  * Represents a variable/argument.
  */
-class Argument implements Evalable {
+class Argument extends Positioned implements Evalable {
     public final String name;
 
-    public Argument(String name) {
+    public Argument(Token t) {
+        super(t);
+        this.name = t.image;
+    }
+    public Argument(String name, int line, int column) {
+        super(line, column);
         this.name = name;
     }
 
@@ -126,11 +162,17 @@ class Argument implements Evalable {
 /**
  * Represents a call to a function.
  */
-class Call implements Evalable {
+class Call extends Positioned implements Evalable {
     public final String function;
     public final Evalable[] args;
 
-    public Call(String function, Evalable[] args) {
+    public Call(Token t, Evalable[] args) {
+        super(t);
+        this.function = t.image;
+        this.args = args;
+    }
+    public Call(String function, Evalable[] args, int line, int column) {
+        super(line, column);
         this.function = function;
         this.args = args;
     }
@@ -166,11 +208,12 @@ class Call implements Evalable {
 /**
  * Represents a product.
  */
-class Product implements Evalable {
+class Product extends Positioned implements Evalable {
     public final Evalable factor1;
     public final Evalable factor2;
 
-    public Product(Evalable factor1, Evalable factor2) {
+    public Product(Evalable factor1, Evalable factor2, int line, int column) {
+        super(line, column);
         this.factor1 = factor1;
         this.factor2 = factor2;
     }
@@ -187,11 +230,12 @@ class Product implements Evalable {
 /**
  * Represents a sum.
  */
-class Sum implements Evalable {
+class Sum extends Positioned implements Evalable {
     public final Evalable summand1;
     public final Evalable summand2;
 
-    public Sum(Evalable summand1, Evalable summand2) {
+    public Sum(Evalable summand1, Evalable summand2, int line, int column) {
+        super(line, column);
         this.summand1 = summand1;
         this.summand2 = summand2;
     }
@@ -210,6 +254,7 @@ class Sum implements Evalable {
  */
 class Functions {
     public static Map<String, Function> map = new HashMap<String, Function>();
+    public static Set<Call> calls = new HashSet<Call>();
     public static Stack<Call> stack = new Stack<Call>();
 }
 
@@ -241,13 +286,25 @@ TOKEN :
     |   < #LOWER : ["a"-"z"] >
 }
 
-void Program() : { Function f; }
+void Program() : { Function f; int i = 1; }
 {
-    ( f = Def() { Functions.map.put(f.name, f); }
-    )* <EOF> {}
+    ( f = Def(i++) { Functions.map.put(f.name, f); }
+    )* <EOF> {
+        if (!Functions.map.containsKey("MAIN")) {
+            throw new ParseException("No MAIN function.");
+        }
+        for (Call c : Functions.calls) {
+            if (!Functions.map.containsKey(c.function) ||
+                Functions.map.get(c.function).args.length != c.args.length) {
+                throw new ParseException("Call to non-existent function \"" +
+                                         c + "\" at line " + c.line +
+                                         ", column " + c.column + ".");
+            }
+        }
+    }
 }
 
-Function Def() : {
+Function Def(int i) : {
     Token t;
     Evalable e;
     List<String> l = new ArrayList<String>();
@@ -263,7 +320,7 @@ Function Def() : {
     ) { s.addAll(l); }
     <S> <LANG> <S> e = Sums(s) <S> <RANG> <S> <EOL>
     {
-        return new Function(t.image, l.toArray(new String[l.size()]), e);
+        return new Function(t.image, l.toArray(new String[l.size()]), e, i);
     }
 }
 
@@ -285,7 +342,7 @@ Evalable Nullnary(Set<String> s) : {
     List<Evalable> l = new ArrayList<Evalable>();
 }
 {
-        <NUM> { return new Number(token.image); }
+        <NUM> { return new Number(token); }
     |   <ARG> {
             if (!s.contains(token.image)) {
                 throw new ParseException("Incorrect argument \"" +
@@ -293,30 +350,64 @@ Evalable Nullnary(Set<String> s) : {
                                          token.beginLine + ", column " +
                                          token.beginColumn + ".");
             }
-            return new Argument(token.image);
+            return new Argument(token);
         }
     |   t = <FUNC> <LPAR>
         ( e = Sums(s) { l.add(e); } l = CallArguments(s, l) )? <RPAR> {
-            return new Call(t.image, l.toArray(new Evalable[l.size()]));
+            Call c = new Call(t, l.toArray(new Evalable[l.size()]));
+            Functions.calls.add(c);
+            return c;
         }
 }
 
-Evalable CreateProduct(Set<String> s, Evalable p) : { Evalable e; }
-{
-    ( <TIMES> e = Nullnary(s) { p = new Product(p, e); } )* { return p; }
-}
-
+/**
+ * Initialises the matching of a product in the language. If no product can be
+ * created an expression of the closest existing higher precedence is returned.
+ *
+ * @param  s the set of all valid parameter names in the expression
+ * @return   the product or higher precedence expression
+ */
 Evalable Products(Set<String> s) : { Evalable e; }
 {
     e = Nullnary(s) e = CreateProduct(s, e) { return e; }
 }
 
-Evalable CreateSum(Set<String> s, Evalable p) : { Evalable e; }
+/**
+ * Performs the matching of a product in the language.
+ *
+ * @param  s the set of all valid parameter names in the expression.
+ * @param  p the partal product so far
+ * @return   the final product
+ */
+Evalable CreateProduct(Set<String> s, Evalable p) : { Evalable e; }
 {
-    ( <PLUS> e = Products(s) { p = new Sum(p, e); } )* { return p; }
+    ( <TIMES> e = Nullnary(s) {
+        p = new Product(p, e, p.getLine(), p.getColumn());
+    } )* { return p; }
 }
 
+/**
+ * Initialises the matching of a sum in the language. If no sum can be created
+ * an expression of the closest existing higher precedence is returned.
+ *
+ * @param  s the set of all valid parameter names in the expression
+ * @return   the sum or higher precedence expression
+ */
 Evalable Sums(Set<String> s) : { Evalable e; }
 {
     e = Products(s) e = CreateSum(s, e) { return e; }
+}
+
+/**
+ * Performs the matching of a sum in the language.
+ *
+ * @param  s the set of all valid parameter names in the expression.
+ * @param  p the partal sum so far
+ * @return   the final sum
+ */
+Evalable CreateSum(Set<String> s, Evalable p) : { Evalable e; }
+{
+    ( <PLUS> e = Products(s) {
+        p = new Sum(p, e, p.getLine(), p.getColumn());
+    } )* { return p; }
 }
