@@ -74,7 +74,7 @@ class Functions {
     public static Map<String, Function> map = new HashMap<String, Function>();
     public static Set<Call> calls = new HashSet<Call>();
     public static Stack<Call> stack = new Stack<Call>();
-    // Maximum args is set to 1 to accommodate the specification, but for
+    // Maximum parameters is set to 1 to accommodate the specification, but for
     // potential future expansion multi-argument functions are supported, where
     // a definition would be in the form:
     //     DEF ADD x y { x+y } ;
