@@ -6,6 +6,9 @@ options {
 PARSER_BEGIN(Assignment)
 import java.util.*;
 
+/**
+ * Main class.
+ */
 public class Assignment {
     public static void main(String[] args) throws EvalException {
         Assignment parser = new Assignment(System.in);
@@ -60,14 +63,25 @@ public class Assignment {
 
 /**
  * Class that stores data required for call checking and evaluation.
+ * "map" contains a map of all function names to their corresponding Function
+ * objects.
+ * "calls" contains a set of all calls potentially performed by the program,
+ * which are checked for validity during the parsing stage.
+ * "stack" contains the stack of calls made during evaluation of an expression
+ * in order to determine if a call leads to recursion.
  */
 class Functions {
     public static Map<String, Function> map = new HashMap<String, Function>();
     public static Set<Call> calls = new HashSet<Call>();
     public static Stack<Call> stack = new Stack<Call>();
+    // Maximum args is set to 1 to accommodate the specification, but for
+    // potential future expansion multi-argument functions are supported, where
+    // a definition would be in the form:
+    //     DEF ADD x y { x+y } ;
+    // and a call would be in the form:
+    //     ADD(1+1 1+2*3)
     public static int maxargs = 1;
 }
-
 
 /**
  * Exception raised during evaluation.
@@ -82,7 +96,7 @@ class EvalException extends Exception {
 }
 
 /**
- * Recursion exception.
+ * Recursion exception raised during evaluation.
  */
 class RecursionException extends EvalException {
     public RecursionException() {
@@ -94,31 +108,83 @@ class RecursionException extends EvalException {
  * Interface that needs to be implemented by all the elements of an expression.
  */
 interface Evalable {
+    /**
+     * Evaluates the element of an expression given a mapping of parameters to
+     * numeric values that correspond to the parameters covering the scope of
+     * the expression.
+     *
+     * @param  args          mapping of numeric values to named parameters
+     * @throws EvalException thrown if an error occurs during evaluation
+     */
     public int eval(Map<String, Integer> args) throws EvalException;
+
+    /**
+     * Returns the line number of the element within the program.
+     *
+     * @return line number
+     */
     public int getLine();
+
+    /**
+     * Returns the column number of the element within the program.
+     *
+     * @return column number
+     */
     public int getColumn();
+
+    /**
+     * Returns a representation of the element in a manner that helps
+     * understand the underlying AST of the element. Useful for debugging.
+     *
+     * @return a string representation of the element
+     */
+    public String toString();
 }
 
 /**
- * Represents a position within the program.
+ * Represents a positioned element within the program. Used as the base for
+ * all the nodes in the AST to easily implement getLine() and getColumn() for
+ * potential future expansion of evaluation messages.
  */
 class Positioned {
     public final int line;
     public final int column;
 
+    /**
+     * Token-based constructor, takes position from token's starting position.
+     *
+     * @param t first token in the element being represented.
+     */
     public Positioned(Token t) {
         this.line = t.beginLine;
         this.column = t.beginColumn;
     }
+
+    /**
+     * Manual constructor.
+     *
+     * @param line   line number of the element
+     * @param column column number of the element
+     */
     public Positioned(int line, int column) {
         this.line = line;
         this.column = column;
     }
 
+    /**
+     * Returns the line number of the element within the program.
+     *
+     * @return line number
+     */
     public int getLine() {
         return line;
     }
 
+    /**
+     * Returns the column number of the element within the program.
+     *
+     * @return column number
+     */
     public int getColumn() {
         return column;
     }
@@ -132,6 +198,14 @@ class Function extends Positioned {
     public final String[] args;
     public final Evalable expr;
 
+    /**
+     * Constructor.
+     *
+     * @param name name of the function
+     * @param args array of named parameters
+     * @param expr body of the function
+     * @param line line number of the function occurrence in the program
+     */
     public Function(String name, String[] args, Evalable expr, int line) {
         super(line, 0);
         this.name = name;
@@ -139,17 +213,35 @@ class Function extends Positioned {
         this.expr = expr;
     }
 
+    /**
+     * Begins the evaluation of a function given its parameters.
+     *
+     * @param  args          array of numeric values corresponding to the
+     *                       function parameters
+     * @return               numeric value returned by the function
+     * @throws EvalException thrown if an error occurs during evaluation
+     */
     public int eval(int[] args) throws EvalException {
+        // Check if we have the correct number of arguments
         if (args.length != this.args.length) {
             throw new EvalException("Incorrect number of arguments.");
         }
+        // Create a mapping from the named parameters to the values, which is
+        // required by all the elements implementing Evalable.
         Map<String, Integer> nargs = new HashMap<String, Integer>();
         for (int i = 0; i < args.length; i++) {
             nargs.put(this.args[i], args[i]);
         }
+        // Eval the body of the function
         return expr.eval(nargs);
     }
 
+    /**
+     * Creates a String representation of the function. Useful for debugging as
+     * it shows the structure of the AST of the body.
+     *
+     * @return a string representing the function
+     */
     public String toString() {
         String r = name+"(";
         for (int i = 0; i < args.length; i++) {
@@ -169,20 +261,42 @@ class Function extends Positioned {
 class Number extends Positioned implements Evalable {
     public final int value;
 
+    /**
+     * Token-based constructor.
+     *
+     * @param t token corresponding to the number.
+     */
     public Number(Token t) {
         super(t);
         this.value = Integer.parseInt(t.image);
     }
+
+    /**
+     * Manual constructor.
+     *
+     * @param value  string representation of the Number's value
+     * @param line   line number of the Number's occurrence in the program
+     * @param column column number of the Number's occurrence in the program
+     */
     public Number(String value, int line, int column) {
         super(line, column);
         this.value = Integer.parseInt(value);
     }
+
+    /**
+     * Manual constructor.
+     *
+     * @param value  the Number's value
+     * @param line   line number of the Number's occurrence in the program
+     * @param column column number of the Number's occurrence in the program
+     */
     public Number(int value, int line, int column) {
         super(line, column);
         this.value = value;
     }
 
     public int eval(Map<String, Integer> args) {
+        // Simply return the value of the Number, the parameters are ignored.
         return value;
     }
 
@@ -197,16 +311,31 @@ class Number extends Positioned implements Evalable {
 class Parameter extends Positioned implements Evalable {
     public final String name;
 
+    /**
+     * Token-based constructor.
+     *
+     * @param t token corresponding to the parameter.
+     */
     public Parameter(Token t) {
         super(t);
         this.name = t.image;
     }
+
+    /**
+     * Manual constructor.
+     *
+     * @param name   the Parameter's name
+     * @param line   line number of the Parameter's occurrence in the program
+     * @param column column number of the Parameter's occurrence in the program
+     */
     public Parameter(String name, int line, int column) {
         super(line, column);
         this.name = name;
     }
 
     public int eval(Map<String, Integer> args) {
+        // Look up the value of the parameter in the mapping passed as the
+        // argument.
         return args.get(name);
     }
 
@@ -222,11 +351,27 @@ class Call extends Positioned implements Evalable {
     public final String function;
     public final Evalable[] args;
 
+    /**
+     * Token-based constructor.
+     *
+     * @param t    token corresponding to the token representing the function
+     *             being called
+     * @param args parameters being passed to the function being called
+     */
     public Call(Token t, Evalable[] args) {
         super(t);
         this.function = t.image;
         this.args = args;
     }
+
+    /**
+     * Manual constructor.
+     *
+     * @param function name of the function being called
+     * @param args     parameters being passed to the function being called
+     * @param line     line number of the Call's occurrence in the program
+     * @param column   column number of the Call's occurrence in the program
+     */
     public Call(String function, Evalable[] args, int line, int column) {
         super(line, column);
         this.function = function;
@@ -235,16 +380,25 @@ class Call extends Positioned implements Evalable {
 
     public int eval(Map<String, Integer> args) throws EvalException {
         int retval;
+        // If the same call occurs previously in the call stack we are in a
+        // recursive loop due to the language not having any branching.
         if (Functions.stack.search(this) > -1) {
             throw new RecursionException();
         }
+        // If we are not in a loop push this call to the call stack.
         Functions.stack.push(this);
+        // Evaluate the parameters being passed to the function, as the
+        // function eval only accepts numeric values.
         int[] iargs = new int[this.args.length];
         for (int i = 0; i < iargs.length; i++) {
             iargs[i] = this.args[i].eval(args);
         }
+        // Get the return value.
         retval = Functions.map.get(function).eval(iargs);
+        // Remove the call from the call stack once we are done, as it can
+        // be repeated later outside its own branch without causing recursion.
         Functions.stack.pop();
+        // Return the return value.
         return retval;
     }
 
@@ -268,6 +422,14 @@ class Product extends Positioned implements Evalable {
     public final Evalable factor1;
     public final Evalable factor2;
 
+    /**
+     * Constructor.
+     *
+     * @param factor1 one of the factors of the product
+     * @param factor2 the other factor of the product
+     * @param line    line number of the Product's occurrence in the program
+     * @param column  column number of the Product's occurrence in the program
+     */
     public Product(Evalable factor1, Evalable factor2, int line, int column) {
         super(line, column);
         this.factor1 = factor1;
@@ -275,6 +437,7 @@ class Product extends Positioned implements Evalable {
     }
 
     public int eval(Map<String, Integer> args) throws EvalException {
+        // We simply return the product of the evaluate factors
         return factor1.eval(args)*factor2.eval(args);
     }
 
@@ -290,6 +453,14 @@ class Sum extends Positioned implements Evalable {
     public final Evalable summand1;
     public final Evalable summand2;
 
+    /**
+     * Constructor.
+     *
+     * @param summand1 one of the summands of the sum
+     * @param summand2 the other summand of the sum
+     * @param line     line number of the Sum's occurrence in the program
+     * @param column   column number of the Sum's occurrence in the program
+     */
     public Sum(Evalable summand1, Evalable summand2, int line, int column) {
         super(line, column);
         this.summand1 = summand1;
@@ -297,6 +468,7 @@ class Sum extends Positioned implements Evalable {
     }
 
     public int eval(Map<String, Integer> args) throws EvalException {
+        // We simply sum the two evaluated summands.
         return summand1.eval(args)+summand2.eval(args);
     }
 
